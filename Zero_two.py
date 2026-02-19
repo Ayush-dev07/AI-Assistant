@@ -1,3 +1,26 @@
+"""Remove ALSA spam from my device."""
+import ctypes
+from ctypes.util import find_library
+
+# Load ALSA library
+asound = ctypes.CDLL(find_library("asound"))
+
+# Define no-op error handler
+ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(
+    None, ctypes.c_char_p, ctypes.c_int,
+    ctypes.c_char_p, ctypes.c_int,
+    ctypes.c_char_p
+)
+
+def py_error_handler(filename, line, function, err, fmt):
+    pass
+
+c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+
+# Set error handler
+asound.snd_lib_error_set_handler(c_error_handler)
+
+"""Main code starts here."""
 import speech_recognition as sr
 import os
 import re
@@ -11,7 +34,7 @@ recognizer =sr.Recognizer()
 recognizer.pause_threshold = 0.8
 recognizer.energy_threshold = 400
 
-mic = sr.Microphone()
+mic = sr.Microphone(device_index=13)
 tts = EmotionalTTS()
 
 def listen_once():
@@ -89,6 +112,12 @@ def execute_command(intent, entities):
     if intent == "mute_volume":
         mute_volume()
         return True
+
+    if intent == "gesture_call":
+        from Gesture_control.gesture import GestureRecognizer, SystemController, GestureControlSystem
+        system = GestureControlSystem()
+        system.run()
+        return True
     
     if intent == "set_volume":
         value = entities.get("value")
@@ -152,13 +181,14 @@ def execute_command(intent, entities):
 def command_loop():
     from Intents.Intent_predictor import predict_intent
     from Entities.Entity_extractor import extract_entities
-    from Memory import set_memory
+    from Memory import set_memory, learn
     while True:
         command = listen_once()
         intent, conf = predict_intent(command)
         entities  = extract_entities(intent, command)
 
         handled = execute_command(intent, entities)
+        learn(intent, entities)
         if not handled:
             break
 
