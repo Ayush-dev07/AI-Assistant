@@ -1,11 +1,19 @@
 import sqlite3
 import joblib
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
 vectorizer = None
 model = None
 
+class IntentEngine():
+    def __init__(self, threshold = 0.75):
+        self.threshold = threshold
+        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        #Implementing sentence transformer with logistic regression.
+        
 def train_model():
     global vectorizer, model
     conn = sqlite3.connect("/home/ayush02/zero_two_intents.db")

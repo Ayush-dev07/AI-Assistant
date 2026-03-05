@@ -4,13 +4,13 @@ conn = sqlite3.connect("/home/ayush02/zero_two_intents.db")
 cursor = conn.cursor()
 
 samples = [
-    ("ok stop", "sleep_words"),
-    ("sleep", "sleep_words"),
-    ("that's enough for today", "sleep_words"),
-    ("zero two goodnight", "sleep_words"),
-    ("rest zero two", "sleep_words"),
-    ("stop zero two", "sleep_words"),
-    ("exit", "sleep_words"),
+    ("decrease volume", "set_volume"),
+    ("reduce volume", "set_volume"),
+    ("", "set_volume"),
+    ("hand control zero two", "set_volume"),
+    ("start gesture", "set_volume"),
+    ("actions command zero two", "set_volume"),
+    ("gesture", "set_volume"),
     
 ]
 
