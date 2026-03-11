@@ -1,4 +1,5 @@
 from __future__ import annotations
+import warnings
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,47 +9,138 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,  # ANTHROPIC_API_KEY = anthropic_api_key
+        case_sensitive=False,  # GEMINI_API_KEY == gemini_api_key
         extra="ignore",        # Don't fail on extra env vars (CI often has many)
     )
 
-    anthropic_api_key: SecretStr = Field(
-        ...,
-        description="Anthropic API key. Required. Get one at console.anthropic.com",
-    )
-    openai_api_key: SecretStr | None = Field(
+    gemini_api_key: SecretStr | None = Field(
         default=None,
-        description="OpenAI API key. Optional. Only needed if using GPT models.",
+        description=(
+            "Google Gemini API key. Primary free LLM provider. "
+            "Get a free key at https://aistudio.google.com → Get API key. "
+            "Free tier: 15 RPM, 1M tokens/day, no credit card required."
+        ),
     )
-    ollama_base_url: str = Field(
-        default="http://localhost:11434",
-        description="Base URL for local Ollama server. Used for local model inference.",
+    groq_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Groq API key. Backup free LLM provider (ultra-fast inference). "
+            "Get a free key at https://console.groq.com → API Keys. "
+            "Free tier: 30 RPM, 100K–500K tokens/day per model."
+        ),
     )
+
+    openrouter_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "OpenRouter API key. Optional gateway to 200+ models. "
+            "Get a key at https://openrouter.ai → Keys. "
+            "Free models available (marked with :free suffix)."
+        ),
+    )
+    openrouter_model: str = Field(
+        default="meta-llama/llama-3.1-8b-instruct:free",
+        description=(
+            "OpenRouter model identifier. Only used when default_provider=openrouter. "
+            "Example free models: meta-llama/llama-3.1-8b-instruct:free, "
+            "google/gemma-2-9b-it:free, mistralai/mistral-7b-instruct:free"
+        ),
+    )
+
+    anthropic_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Anthropic API key. Optional — only needed if using Claude models. "
+            "Get one at https://console.anthropic.com. "
+            "Gemini is now the default free provider."
+        ),
+    )
+
+    default_provider: str = Field(
+        default="gemini",
+        description=(
+            "Which LLM provider to use by default. "
+            "Accepted values: gemini, groq, openrouter, anthropic. "
+            "Controls create_provider_from_env() in core/llm/router.py."
+        ),
+    )
+
     default_model: str = Field(
-        default="claude-sonnet-4-20250514",
-        description="Default LLM model identifier. Must be a valid model string.",
+        default="gemini-1.5-flash",
+        description=(
+            "Default LLM model identifier. Must be a valid model string for "
+            "the selected default_provider. "
+            "Examples: gemini-1.5-flash, llama-3.3-70b-versatile, "
+            "meta-llama/llama-3.1-8b-instruct:free"
+        ),
     )
 
-    # Memory / Databases
-    chroma_path: str = Field(
-        default="./data/chroma",
-        description="Filesystem path where ChromaDB persists vector embeddings.",
+    upstash_redis_rest_url: str | None = Field(
+        default=None,
+        description=(
+            "Upstash Redis REST API URL for short-term memory. "
+            "Format: https://your-db-name.upstash.io. "
+            "Get at https://console.upstash.com → Create Database → REST API. "
+            "If not set, falls back to an in-process Python deque (no persistence)."
+        ),
     )
-    redis_url: str = Field(
-        default="redis://localhost:6379/0",
-        description="Redis connection URL. Used for short-term memory and task queue.",
-    )
-    postgres_url: str = Field(
-        default="postgresql://sa:changeme@localhost:5432/superagent",
-        description="PostgreSQL connection URL. Used for episodic memory (task logs).",
+    upstash_redis_rest_token: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Upstash Redis REST API token. Found next to the REST URL. "
+            "Required if upstash_redis_rest_url is set."
+        ),
     )
 
-    # Agent Behaviour 
+    pinecone_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Pinecone API key for long-term vector memory. "
+            "Get at https://app.pinecone.io → API Keys. "
+            "Free tier: 100K vectors, 2M reads/month."
+        ),
+    )
+    pinecone_index_name: str = Field(
+        default="agent-memory",
+        description=(
+            "Name of the Pinecone index to use for long-term memory. "
+            "Must be created in the Pinecone console before use. "
+            "Create with: dimension=1024 (for multilingual-e5-large embeddings), "
+            "metric=cosine, cloud=aws, region=us-east-1."
+        ),
+    )
+    pinecone_index_host: str | None = Field(
+        default=None,
+        description=(
+            "Pinecone index host URL. Found in the Pinecone console after index creation. "
+            "Format: https://agent-memory-xxxx.svc.us-east1-aws.pinecone.io. "
+            "Required for Pinecone Serverless — not the same as the API base URL."
+        ),
+    )
+
+    supabase_url: str | None = Field(
+        default=None,
+        description=(
+            "Supabase project URL for episodic memory (task history). "
+            "Format: https://xxxxxxxxxxxx.supabase.co. "
+            "Get at https://app.supabase.com → Project Settings → API → Project URL. "
+            "⚠️ Run the CREATE TABLE SQL from memory/episodic.py in the SQL editor first."
+        ),
+    )
+    supabase_service_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Supabase service role key (not the anon key). "
+            "Get at https://app.supabase.com → Project Settings → API → service_role. "
+            "Keep this secret — it bypasses Row Level Security."
+        ),
+    )
+
     max_iterations: int = Field(
         default=10,
         ge=1,
         le=50,
-        description="Max ReAct loop iterations per task. Higher = more capable but costlier.",
+        description="Max ReAct loop iterations per task. Higher = more capable but uses more tokens.",
     )
     max_tokens: int = Field(
         default=4096,
@@ -63,7 +155,6 @@ class Settings(BaseSettings):
         description="Number of recent messages kept in short-term memory context.",
     )
 
-    # Observability 
     log_level: str = Field(
         default="INFO",
         description="Logging verbosity. Use DEBUG locally, INFO/WARNING in production.",
@@ -77,13 +168,14 @@ class Settings(BaseSettings):
         description="Port to expose Prometheus /metrics endpoint.",
     )
 
-    # Security 
+    # ── Security
     vault_master_key: SecretStr = Field(
         ...,
         min_length=32,
         description=(
             "Master key for the local encrypted secrets vault. "
-            "Must be at least 32 characters. Generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            "Must be at least 32 characters. "
+            "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
         ),
     )
     secret_key: SecretStr = Field(
@@ -92,7 +184,7 @@ class Settings(BaseSettings):
         description="Secret key for JWT signing and CSRF protection.",
     )
 
-    # API Server 
+    # ── API Server 
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000, ge=1024, le=65535)
     cors_origins: str = Field(
@@ -100,43 +192,154 @@ class Settings(BaseSettings):
         description="Comma-separated list of allowed CORS origins.",
     )
 
-    # Validators 
+    # ── Validators 
 
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
+        """Ensure log level is one of Python's standard levels."""
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         upper = v.upper()
         if upper not in allowed:
             raise ValueError(f"log_level must be one of {allowed}, got: {v!r}")
         return upper
 
+    @field_validator("default_provider")
+    @classmethod
+    def validate_default_provider(cls, v: str) -> str:
+        """Ensure the provider name is one this codebase knows how to handle."""
+        allowed = {"gemini", "groq", "openrouter", "anthropic"}
+        lower = v.lower().strip()
+        if lower not in allowed:
+            raise ValueError(
+                f"default_provider must be one of {allowed}, got: {v!r}. "
+                "Check core/llm/router.py for the full list of supported providers."
+            )
+        return lower
+
     @field_validator("default_model")
     @classmethod
     def validate_model(cls, v: str) -> str:
-        known_prefixes = ("claude-", "gpt-", "o1-", "llama", "mistral", "gemma")
+        """Warn if the model string doesn't look like a known provider format."""
+        known_prefixes = (
+            "gemini-",       # Google Gemini
+            "claude-",       # Anthropic Claude
+            "gpt-",          # OpenAI GPT
+            "o1-",           # OpenAI o1
+            "llama",         # Meta Llama (Groq / OpenRouter)
+            "mistral",       # Mistral AI (Groq / OpenRouter)
+            "gemma",         # Google Gemma (Groq / OpenRouter)
+            "mixtral",       # Mistral MoE (Groq)
+            "meta-llama/",   # OpenRouter full path format
+            "google/",       # OpenRouter full path format
+            "mistralai/",    # OpenRouter full path format
+            "microsoft/",    # OpenRouter full path format
+            "qwen/",         # OpenRouter full path format
+        )
         if not any(v.lower().startswith(p) for p in known_prefixes):
-            # Don't hard-fail — custom/new models should still work
-            import warnings
             warnings.warn(
                 f"default_model {v!r} doesn't match any known provider prefix. "
-                "Double-check the model string.",
+                "Double-check the model string against your chosen provider's docs.",
                 stacklevel=2,
             )
         return v
 
     @model_validator(mode="after")
-    def validate_at_least_one_provider(self) -> "Settings":
-        if not self.anthropic_api_key.get_secret_value():
+    def validate_at_least_one_llm_provider(self) -> "Settings":
+        has_gemini = bool(
+            self.gemini_api_key and self.gemini_api_key.get_secret_value()
+        )
+        has_groq = bool(
+            self.groq_api_key and self.groq_api_key.get_secret_value()
+        )
+        has_openrouter = bool(
+            self.openrouter_api_key and self.openrouter_api_key.get_secret_value()
+        )
+        has_anthropic = bool(
+            self.anthropic_api_key and self.anthropic_api_key.get_secret_value()
+        )
+
+        if not any([has_gemini, has_groq, has_openrouter, has_anthropic]):
             raise ValueError(
-                "ANTHROPIC_API_KEY is required. "
+                "No LLM provider API key found. Set at least one of:\n"
+                "  GEMINI_API_KEY     → recommended (free, 1M tokens/day)\n"
+                "  GROQ_API_KEY       → fast inference (free, 100K-500K tokens/day)\n"
+                "  OPENROUTER_API_KEY → multi-provider gateway (free models available)\n"
+                "  ANTHROPIC_API_KEY  → Claude models (paid)\n\n"
+                "Quickest setup: get a free Gemini key at https://aistudio.google.com "
+                "and add GEMINI_API_KEY=your-key to your .env file."
+            )
+
+        # Warn if the configured default_provider doesn't have a key
+        provider_key_map = {
+            "gemini": has_gemini,
+            "groq": has_groq,
+            "openrouter": has_openrouter,
+            "anthropic": has_anthropic,
+        }
+        if not provider_key_map.get(self.default_provider, False):
+            warnings.warn(
+                f"default_provider is set to {self.default_provider!r} "
+                f"but no API key was found for it. "
+                f"Set the matching key or change DEFAULT_PROVIDER in your .env.",
+                stacklevel=2,
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_upstash_pair(self) -> "Settings":
+        """
+        Upstash requires both URL and token together.
+        Having one without the other is always a misconfiguration.
+        """
+        has_url = bool(self.upstash_redis_rest_url)
+        has_token = bool(
+            self.upstash_redis_rest_token
+            and self.upstash_redis_rest_token.get_secret_value()
+        )
+        if has_url and not has_token:
+            raise ValueError(
+                "UPSTASH_REDIS_REST_URL is set but UPSTASH_REDIS_REST_TOKEN is missing. "
+                "Both are required. Find the token in the Upstash console → REST API tab."
+            )
+        if has_token and not has_url:
+            raise ValueError(
+                "UPSTASH_REDIS_REST_TOKEN is set but UPSTASH_REDIS_REST_URL is missing. "
+                "Both are required. Find the URL in the Upstash console → REST API tab."
             )
         return self
 
     @property
     def cors_origins_list(self) -> list[str]:
+        """Parse the comma-separated CORS string into a list."""
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
+    @property
+    def has_short_term_memory(self) -> bool:
+        """True if Upstash is fully configured (URL + token both set)."""
+        return bool(
+            self.upstash_redis_rest_url
+            and self.upstash_redis_rest_token
+            and self.upstash_redis_rest_token.get_secret_value()
+        )
 
-# Module-level singleton
+    @property
+    def has_long_term_memory(self) -> bool:
+        """True if Pinecone is fully configured (API key + host both set)."""
+        return bool(
+            self.pinecone_api_key
+            and self.pinecone_api_key.get_secret_value()
+            and self.pinecone_index_host
+        )
+
+    @property
+    def has_episodic_memory(self) -> bool:
+        """True if Supabase is fully configured (URL + service key both set)."""
+        return bool(
+            self.supabase_url
+            and self.supabase_service_key
+            and self.supabase_service_key.get_secret_value()
+        )
+
 settings = Settings()  # type: ignore[call-arg]
