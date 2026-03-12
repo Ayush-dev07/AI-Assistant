@@ -1,171 +1,179 @@
 from __future__ import annotations
 
+import os
 import re
 
-from core.llm.base import LLMMessage, LLMProvider, LLMResponse, ToolDefinition
+from core.llm.base import (
+    LLMMessage,
+    LLMProvider,
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMResponse,
+    ToolDefinition,
+)
 from core.logging import get_logger
 
 log = get_logger(__name__)
 
-# Keywords that signal a task needs more capable models
+# Patterns that indicate a task needs a more powerful model
 _COMPLEX_SIGNALS = re.compile(
-    r"\b(analyze|critique|compare|evaluate|research|synthesize|"
-    r"implement|architect|design|complex|thorough|comprehensive|"
-    r"step.by.step|reason|carefully|in.depth)\b",
+    r"\b(analyze|analysis|compare|research|explain|synthesize|evaluate|"
+    r"argue|debate|critique|review|complex|detailed|comprehensive|thorough|"
+    r"step.by.step|reason|reasoning|think through)\b",
     re.IGNORECASE,
 )
 
+# Patterns that indicate a coding task (usually needs stronger model)
 _CODE_SIGNALS = re.compile(
-    r"\b(code|implement|debug|function|class|algorithm|script|"
-    r"program|refactor|test|unit.test)\b",
+    r"\b(code|implement|function|class|debug|refactor|optimize|"
+    r"algorithm|program|script|api|database|sql|python|javascript)\b",
     re.IGNORECASE,
 )
 
+# Patterns that indicate a simple, fast task
 _SIMPLE_SIGNALS = re.compile(
-    r"\b(what.is|define|list|summarize|translate|convert|format|"
-    r"spell.check|grammar|simple|quick|brief)\b",
+    r"\b(what is|who is|when|where|how many|define|list|translate|"
+    r"summarize|spell|convert|calculate|simple|quick|brief)\b",
     re.IGNORECASE,
 )
+
+
+def create_provider_from_env(provider_name: str | None = None) -> LLMProvider:
+    name = (provider_name or os.getenv("DEFAULT_PROVIDER", "gemini")).lower().strip()
+
+    if name == "gemini":
+        from core.llm.gemini import GeminiProvider
+        model = os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+        return GeminiProvider(model=model)
+
+    elif name == "groq":
+        from core.llm.groq import GroqProvider
+        model = os.getenv("DEFAULT_MODEL", "llama-3.1-8b-instant")
+        return GroqProvider(model=model)
+
+    elif name == "openrouter":
+        from core.llm.openrouter import OpenRouterProvider
+        model = os.getenv("DEFAULT_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+        return OpenRouterProvider(model=model)
+
+    elif name == "claude":
+        # Keep Claude support — useful when you eventually get credits
+        from core.llm.claude import ClaudeProvider
+        model = os.getenv("DEFAULT_MODEL", "claude-haiku-4-5-20251001")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise LLMProviderError(
+                "ANTHROPIC_API_KEY not set. "
+                "Either set the key or change DEFAULT_PROVIDER to gemini or groq."
+            )
+        return ClaudeProvider(api_key=api_key, model=model)
+
+    else:
+        raise LLMProviderError(
+            f"Unknown provider: {name!r}. "
+            f"Supported: gemini, groq, openrouter, claude. "
+            f"Set DEFAULT_PROVIDER in your .env file."
+        )
 
 
 class RouterProvider(LLMProvider):
     def __init__(
         self,
-        providers: dict[str, LLMProvider],
-        cost_limit_usd: float | None = None,
+        fast_provider: LLMProvider,
+        powerful_provider: LLMProvider | None = None,
+        auto_fallback: bool = True,
     ) -> None:
-        if "balanced" not in providers:
-            raise ValueError("RouterProvider requires at least a 'balanced' provider")
-
-        self._providers = providers
-        self._cost_limit = cost_limit_usd
-        self._session_cost = 0.0
-
-        # Track routing decisions for analysis
-        self._routing_log: list[dict] = []
-
-    @property
-    def provider_name(self) -> str:
-        return "router"
+        self._fast = fast_provider
+        # If no powerful provider, use fast for everything
+        self._powerful = powerful_provider or fast_provider
+        self._auto_fallback = auto_fallback
 
     @property
     def model_name(self) -> str:
-        return "auto"
+        return f"router({self._fast.model_name}/{self._powerful.model_name})"
 
-    def _select_tier(
-        self,
-        messages: list[LLMMessage],
-        tools: list[ToolDefinition] | None,
-    ) -> str:
-        # Combine all message content for analysis
-        all_text = " ".join(m.content for m in messages)
-        total_chars = len(all_text)
+    @property
+    def supports_tools(self) -> bool:
+        return self._fast.supports_tools
 
-        # Feature extraction
-        has_tools = bool(tools)
-        is_complex = bool(_COMPLEX_SIGNALS.search(all_text))
-        is_code = bool(_CODE_SIGNALS.search(all_text))
-        is_simple = bool(_SIMPLE_SIGNALS.search(all_text))
-        is_long = total_chars > 3000   # Rough proxy for token count (1 token ≈ 4 chars)
-        is_very_long = total_chars > 8000
+    def _classify_task(self, messages: list[LLMMessage]) -> str:
+        """
+        Classify the task complexity as 'simple', 'complex', or 'code'.
 
-        # ── Decision tree ─────────────────────────────────────────────────────
-        # Upgrade to powerful
-        if is_very_long and is_complex:
-            tier = "powerful"
-        elif is_complex and is_code:
-            tier = "powerful"
-        # Balanced
-        elif has_tools or is_code or is_complex or is_long:
-            tier = "balanced"
-        # Fast (simple, short, no tools)
-        elif is_simple and not is_long:
-            tier = "fast"
-        # Default
-        else:
-            tier = "balanced"
+        Reads the last user message (the actual task/goal) and checks
+        for keywords that indicate complexity level.
 
-        # Fall back if the selected tier isn't configured
-        if tier not in self._providers:
-            log.debug("router_tier_fallback", requested=tier, using="balanced")
-            tier = "balanced"
+        Returns: 'simple' | 'complex' | 'code'
+        """
+        # Look at the last user message for classification signals
+        last_user_content = ""
+        for msg in reversed(messages):
+            if msg.role == "user":
+                last_user_content = msg.content
+                break
 
-        # Downgrade if we're over cost limit
-        if self._cost_limit and self._session_cost >= self._cost_limit:
-            tier = "fast" if "fast" in self._providers else "balanced"
-            log.warning(
-                "router_cost_limit_reached",
-                session_cost=self._session_cost,
-                limit=self._cost_limit,
-                downgraded_to=tier,
-            )
+        if not last_user_content:
+            return "simple"
 
-        log.debug(
-            "router_decision",
-            tier=tier,
-            has_tools=has_tools,
-            is_complex=is_complex,
-            is_code=is_code,
-            is_simple=is_simple,
-            input_chars=total_chars,
-        )
-        return tier
+        if _CODE_SIGNALS.search(last_user_content):
+            return "code"
+        if _COMPLEX_SIGNALS.search(last_user_content):
+            return "complex"
+        if _SIMPLE_SIGNALS.search(last_user_content):
+            return "simple"
+
+        # Default to simple to preserve powerful model quota
+        # Better to occasionally underserve simple tasks than waste quota
+        word_count = len(last_user_content.split())
+        return "complex" if word_count > 50 else "simple"
 
     async def complete(
         self,
         messages: list[LLMMessage],
-        *,
-        system: str = "",
         tools: list[ToolDefinition] | None = None,
-        max_tokens: int = 4096,
         temperature: float = 0.7,
+        max_tokens: int = 4096,
     ) -> LLMResponse:
-        """Route to the best provider and run the completion."""
-        tier = self._select_tier(messages, tools)
-        provider = self._providers[tier]
+        task_type = self._classify_task(messages)
+        use_powerful = task_type in ("complex", "code")
+        provider = self._powerful if use_powerful else self._fast
 
-        response = await provider.complete(
-            messages,
-            system=system,
-            tools=tools,
-            max_tokens=max_tokens,
-            temperature=temperature,
+        log.debug(
+            "router_selected_provider",
+            task_type=task_type,
+            provider=provider.model_name,
         )
 
-        # Track cumulative cost for budget management
-        self._session_cost += response.cost_usd
-        self._routing_log.append({
-            "tier": tier,
-            "model": response.model,
-            "cost_usd": response.cost_usd,
-            "tokens": response.total_tokens,
-        })
+        try:
+            return await provider.complete(messages, tools, temperature, max_tokens)
 
-        return response
+        except LLMRateLimitError:
+            if self._auto_fallback and use_powerful and provider is not self._fast:
+                log.warning(
+                    "router_falling_back",
+                    reason="powerful_provider_rate_limited",
+                    fallback=self._fast.model_name,
+                )
+                return await self._fast.complete(messages, tools, temperature, max_tokens)
+            raise
 
-    async def stream(self, messages, *, system="", max_tokens=4096, temperature=0.7):  # type: ignore[override]
-        """Route streaming to the balanced provider (fast enough for real-time output)."""
-        provider = self._providers.get("balanced") or next(iter(self._providers.values()))
-        async for chunk in provider.stream(
-            messages, system=system, max_tokens=max_tokens, temperature=temperature
-        ):
+    async def stream(
+        self,
+        messages: list[LLMMessage],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ):
+        """Route streaming to the fast provider (streaming is for real-time display)."""
+        async for chunk in self._fast.stream(messages, temperature, max_tokens):
             yield chunk
 
-    def routing_summary(self) -> dict:
-        if not self._routing_log:
-            return {"calls": 0, "total_cost_usd": 0.0, "by_tier": {}}
-
-        by_tier: dict[str, dict] = {}
-        for entry in self._routing_log:
-            t = entry["tier"]
-            if t not in by_tier:
-                by_tier[t] = {"calls": 0, "cost_usd": 0.0, "tokens": 0}
-            by_tier[t]["calls"] += 1
-            by_tier[t]["cost_usd"] += entry["cost_usd"]
-            by_tier[t]["tokens"] += entry["tokens"]
-
-        return {
-            "calls": len(self._routing_log),
-            "total_cost_usd": round(self._session_cost, 6),
-            "by_tier": by_tier,
-        }
+    def routing_summary(self) -> str:
+        """Return a human-readable summary of the routing configuration."""
+        same = self._fast is self._powerful
+        if same:
+            return f"Single provider: {self._fast.model_name}"
+        return (
+            f"Fast (simple tasks):   {self._fast.model_name}\n"
+            f"Powerful (complex):    {self._powerful.model_name}\n"
+            f"Auto-fallback:         {self._auto_fallback}"
+        )
