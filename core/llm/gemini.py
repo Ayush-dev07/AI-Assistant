@@ -156,10 +156,10 @@ class GeminiProvider(LLMProvider):
         }
 
         if system_parts:
-            body["system_instruction"] = {"parts": system_parts}
+            body["systemInstruction"] = {"parts": system_parts}
 
         if tools:
-            body["tools"] = [{"function_declarations": [
+            body["tools"] = [{"functionDeclarations": [
                 {
                     "name": t.name,
                     "description": t.description,
@@ -171,7 +171,7 @@ class GeminiProvider(LLMProvider):
                 for t in tools
             ]}]
             # AUTO mode: Gemini decides whether to call a tool or respond directly
-            body["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
+            body["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
 
         return body
 

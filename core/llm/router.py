@@ -97,15 +97,6 @@ class RouterProvider(LLMProvider):
         return self._fast.supports_tools
 
     def _classify_task(self, messages: list[LLMMessage]) -> str:
-        """
-        Classify the task complexity as 'simple', 'complex', or 'code'.
-
-        Reads the last user message (the actual task/goal) and checks
-        for keywords that indicate complexity level.
-
-        Returns: 'simple' | 'complex' | 'code'
-        """
-        # Look at the last user message for classification signals
         last_user_content = ""
         for msg in reversed(messages):
             if msg.role == "user":
@@ -121,9 +112,7 @@ class RouterProvider(LLMProvider):
             return "complex"
         if _SIMPLE_SIGNALS.search(last_user_content):
             return "simple"
-
-        # Default to simple to preserve powerful model quota
-        # Better to occasionally underserve simple tasks than waste quota
+        
         word_count = len(last_user_content.split())
         return "complex" if word_count > 50 else "simple"
 
