@@ -9,14 +9,12 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from core.logging import get_logger
+from dotenv import load_dotenv
+load_dotenv()
 
 log = get_logger(__name__)
 
-
-# ─── Data Model ──────────────────────────────────────────────────────────────
-
 class Message(BaseModel):
-    """A single message in the conversation window."""
 
     role: str = Field(..., description="'user' | 'assistant' | 'system'")
     content: str = Field(..., description="Message text")
@@ -30,9 +28,6 @@ class Message(BaseModel):
             raise ValueError(f"role must be one of {allowed}, got: {v!r}")
         return v
 
-
-# ─── Upstash Redis Client ─────────────────────────────────────────────────────
-
 class UpstashRedisClient:
 
     def __init__(self, rest_url: str, rest_token: str) -> None:
@@ -41,17 +36,17 @@ class UpstashRedisClient:
             "Authorization": f"Bearer {rest_token}",
             "Content-Type": "application/json",
         }
-        # httpx.AsyncClient is lightweight — one instance, reused across calls
         self._http = httpx.AsyncClient(
             headers=self._headers,
-            timeout=10.0,  # 10-second timeout — Upstash is usually <100ms
+            timeout=10.0,  
         )
 
     async def _command(self, *args: Any) -> Any:
         try:
-            # Build URL: base_url/COMMAND/arg1/arg2
-            path = "/".join(str(a) for a in args)
-            response = await self._http.post(f"{self._url}/{path}")
+            response = await self._http.post(
+                self._url,
+                json=list(args)
+            )
             response.raise_for_status()
             data = response.json()
             return data.get("result")
@@ -80,8 +75,20 @@ class UpstashRedisClient:
         """Close the underlying HTTP client."""
         await self._http.aclose()
 
+    async def lpush(self, key: str, value: str) -> int:
+        """LPUSH key value — push value to the front of list."""
+        result = await self._command("LPUSH", key, value)
+        return result or 0
 
-# ─── Short-Term Memory ────────────────────────────────────────────────────────
+    async def ltrim(self, key: str, start: int, end: int) -> bool:
+        """LTRIM key start end — trim list to range."""
+        result = await self._command("LTRIM", key, start, end)
+        return result == "OK"
+    
+    async def lrange(self, key: str, start: int, end: int) -> list[str]:
+        """LRANGE key start end — get list range."""
+        result = await self._command("LRANGE", key, start, end)
+        return result or []
 
 class ShortTermMemory:
     def __init__(
@@ -94,14 +101,10 @@ class ShortTermMemory:
         self._window_size = window_size
         self._session_id = session_id
 
-        # In-process sliding window — always works, no network needed
         self._messages: deque[Message] = deque(maxlen=window_size)
 
-        # Redis key for this session's data in Upstash
         self._redis_key = f"st:{session_id}"
 
-        # Set up Upstash client if credentials are available
-        # Priority: constructor args → environment variables → None (disabled)
         url = upstash_url or os.getenv("UPSTASH_REDIS_REST_URL")
         token = upstash_token or os.getenv("UPSTASH_REDIS_REST_TOKEN")
 
@@ -133,10 +136,8 @@ class ShortTermMemory:
             window_fill=f"{len(self._messages)}/{self._window_size}",
         )
 
-        # Persist to Upstash asynchronously — non-blocking, fire and forget
-        # If this fails, it's logged but the in-process deque is unaffected
         if self._upstash:
-            await self._persist()
+            await self._persist(msg)
 
     async def get_context(self) -> str:
         if not self._messages:
@@ -145,7 +146,6 @@ class ShortTermMemory:
         lines = []
         for msg in self._messages:
             role_label = msg.role.capitalize()
-            # Truncate very long messages to keep context window usage sane
             content = (
                 msg.content[:500] + "…"
                 if len(msg.content) > 500
@@ -168,13 +168,13 @@ class ShortTermMemory:
         if not self._upstash:
             return False
 
-        raw = await self._upstash.get(self._redis_key)
+        raw = await self._upstash.lrange(self._redis_key, 0, -1)
         if not raw:
             return False
 
         try:
-            messages = json.loads(raw)
-            # Only restore the last window_size messages
+            messages = [json.loads(x) for x in reversed(raw)]
+            self._messages.clear()
             for msg_dict in messages[-self._window_size:]:
                 self._messages.append(Message(**msg_dict))
             log.info(
@@ -189,13 +189,17 @@ class ShortTermMemory:
                 session=self._session_id,
                 error=str(e),
             )
-            self._messages.clear()
             return False
 
-    async def _persist(self) -> None:
+    async def _persist(self, msg:Message) -> None:
         try:
-            data = json.dumps([m.model_dump() for m in self._messages])
-            await self._upstash.setex(self._redis_key, 86400, data)
+            data = json.dumps(msg.model_dump())
+            await self._upstash.lpush(self._redis_key, data)
+            await self._upstash.ltrim(
+                self._redis_key,
+                0,
+                self._window_size - 1
+            )
         except Exception as e:
             log.warning(
                 "short_term_memory_persist_failed",

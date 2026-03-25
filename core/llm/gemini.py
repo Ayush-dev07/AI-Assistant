@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import Any, AsyncIterator
+from dotenv import load_dotenv
+load_dotenv()
 
 import httpx
 
@@ -23,21 +25,12 @@ log = get_logger(__name__)
 
 # Gemini REST API base URL
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-
-GEMINI_PRICING: dict[str, dict[str, float]] = {
-    "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
-    "gemini-1.5-flash-8b": {"input": 0.0375, "output": 0.15},
-    "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
-}
-
-
 class GeminiProvider(LLMProvider):
 
-    def __init__(
+    def __init__( 
         self,
         api_key: str | None = None,
-        model: str = "gemini-1.5-flash",
+        model: str = "gemini-2.5-flash",
         max_retries: int = 3,
     ) -> None:
         resolved_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -235,11 +228,7 @@ class GeminiProvider(LLMProvider):
         input_tokens = usage.get("promptTokenCount", 0)
         output_tokens = usage.get("candidatesTokenCount", 0)
 
-        pricing = GEMINI_PRICING.get(self._model, {"input": 0.0, "output": 0.0})
-        cost = (
-            (input_tokens / 1_000_000) * pricing["input"]
-            + (output_tokens / 1_000_000) * pricing["output"]
-        )
+        cost = 0.0
 
         stop_reason = candidate.get("finishReason", "")
 

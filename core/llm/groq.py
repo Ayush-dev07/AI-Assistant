@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 from typing import Any, AsyncIterator
+from dotenv import load_dotenv
+load_dotenv()
 
 import httpx
 
@@ -38,21 +40,19 @@ GROQ_MODELS: dict[str, dict[str, Any]] = {
         "supports_tools": True,
         "description": "Powerful reasoning. Use for complex tasks.",
     },
-    "mixtral-8x7b-32768": {
+    "openai/gpt-oss-120b": {
         "context_window": 32768,
-        "daily_tokens": 100_000,
+        "daily_tokens": 200_000,
         "supports_tools": True,
-        "description": "Strong instruction following. 32K context.",
+        "description": "Strong instruction following.",
     },
-    "gemma2-9b-it": {
+    "qwen/qwen3-32b": {
         "context_window": 8192,
         "daily_tokens": 250_000,
         "supports_tools": False,
-        "description": "Google's Gemma 2. Good all-rounder.",
+        "description": "Strong multilingual support and reasoning.",
     },
 }
-
-
 class GroqProvider(LLMProvider):
     def __init__(
         self,
