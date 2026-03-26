@@ -72,12 +72,7 @@ class AgentMetrics:
         buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0),
     ))
 
-
-# Module-level singleton — import METRICS anywhere to record observations
 METRICS = AgentMetrics()
-
-
-# ─── structlog Configuration ──────────────────────────────────────────────────
 
 def configure_logging(log_level: str = "INFO", *, pretty: bool | None = None) -> None:
 
@@ -114,12 +109,10 @@ def configure_logging(log_level: str = "INFO", *, pretty: bool | None = None) ->
         cache_logger_on_first_use=True,
     )
 
-
 def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
 
-
-def start_metrics_server(port: int = 9090) -> None:
+def start_metrics_server(port: int = 8000) -> None:
     log = get_logger(__name__)
     start_http_server(port)
     log.info("prometheus_metrics_server_started", port=port, path="/metrics")
