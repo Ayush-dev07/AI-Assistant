@@ -69,11 +69,12 @@ class GeminiProvider(LLMProvider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        system = None,
     ) -> LLMResponse:
         """
         Generate a completion using Gemini.
         """
-        body = self._build_request(messages, tools, temperature, max_tokens)
+        body = self._build_request(messages, tools, temperature, max_tokens, system)
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -83,7 +84,7 @@ class GeminiProvider(LLMProvider):
             except LLMRateLimitError:
                 if attempt == self._max_retries:
                     raise
-                wait = 2 ** attempt  # 1s, 2s, 4s
+                wait = 2 ** attempt 
                 log.warning(
                     "gemini_rate_limited",
                     attempt=attempt + 1,
@@ -96,11 +97,12 @@ class GeminiProvider(LLMProvider):
         messages: list[LLMMessage],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        system = None,
     ) -> AsyncIterator[str]:
         """
         Stream response tokens as they arrive.
         """
-        body = self._build_request(messages, None, temperature, max_tokens)
+        body = self._build_request(messages, None, temperature, max_tokens, system)
 
         async with self._http.stream("POST", self._stream_endpoint, json=body) as resp:
             resp.raise_for_status()
@@ -129,11 +131,16 @@ class GeminiProvider(LLMProvider):
         tools: list[ToolDefinition] | None,
         temperature: float,
         max_tokens: int,
+        system = None,
     ) -> dict[str, Any]:
         """
         Convert standard LLMMessage list to Gemini API request format.
         """
         system_parts = []
+
+        if system:
+            system_parts.append({"text": system})
+
         contents = []
 
         for msg in messages:

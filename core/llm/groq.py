@@ -100,11 +100,12 @@ class GroqProvider(LLMProvider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        system = None,
     ) -> LLMResponse:
         """
         Generate a completion using Groq's inference API.
         """
-        body = self._build_request(messages, tools, temperature, max_tokens)
+        body = self._build_request(messages, tools, temperature, max_tokens, system)
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -127,11 +128,12 @@ class GroqProvider(LLMProvider):
         messages: list[LLMMessage],
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        system = None
     ) -> AsyncIterator[str]:
         """
         Stream response tokens via Server-Sent Events.
         """
-        body = self._build_request(messages, None, temperature, max_tokens)
+        body = self._build_request(messages, None, temperature, max_tokens, system)
         body["stream"] = True
 
         async with self._http.stream("POST", "/chat/completions", json=body) as resp:
@@ -157,6 +159,7 @@ class GroqProvider(LLMProvider):
         tools: list[ToolDefinition] | None,
         temperature: float,
         max_tokens: int,
+        system = None
     ) -> dict[str, Any]:
         """
         Build the OpenAI-compatible request body.
@@ -170,6 +173,10 @@ class GroqProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        system_parts, contents = [], []
+
+        if system:
+            system_parts.append({"text": system})
 
         if tools and self.supports_tools:
             body["tools"] = [
