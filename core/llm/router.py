@@ -43,12 +43,12 @@ def create_provider_from_env(provider_name: str | None = None) -> LLMProvider:
 
     if name == "gemini":
         from core.llm.gemini import GeminiProvider
-        model = os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+        model = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
         return GeminiProvider(model=model)
 
     elif name == "groq":
         from core.llm.groq import GroqProvider
-        model = os.getenv("DEFAULT_MODEL", "llama-3.1-8b-instant")
+        model = os.getenv("DEFAULT_MODEL", "llama-3.3-70b-versatile")
         return GroqProvider(model=model)
 
     elif name == "openrouter":
@@ -84,8 +84,7 @@ class RouterProvider(LLMProvider):
         auto_fallback: bool = True,
     ) -> None:
         self._fast = fast_provider
-        # If no powerful provider, use fast for everything
-        self._powerful = powerful_provider or fast_provider
+        self._powerful = powerful_provider 
         self._auto_fallback = auto_fallback
 
     @property

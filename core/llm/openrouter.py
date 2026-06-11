@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 from typing import Any, AsyncIterator
+from dotenv import load_dotenv
+load_dotenv()
 
 import httpx
 
@@ -24,16 +26,14 @@ log = get_logger(__name__)
 
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
 
-# Well-known free models on OpenRouter (may change — check openrouter.ai/models)
 FREE_MODELS = [
-    "meta-llama/llama-3.1-8b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
     "meta-llama/llama-3.2-3b-instruct:free",
     "google/gemma-2-9b-it:free",
     "mistralai/mistral-7b-instruct:free",
     "qwen/qwen-2-7b-instruct:free",
     "microsoft/phi-3-mini-128k-instruct:free",
 ]
-
 
 class OpenRouterProvider(LLMProvider):
     def __init__(
